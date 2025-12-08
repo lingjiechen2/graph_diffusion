@@ -14,6 +14,7 @@ This project implements the “graph-shaped tensor” formulation of Graph Beta 
 - `scripts/run_benchmarks.py` — run evaluation for a benchmark spec (D1/D2) with optional checkpoint.
 - `scripts/debug_pipeline.py` — tiny end-to-end sanity check on a small synthetic graph.
 - `scripts/launch_experiments.sh` — convenience launcher to train + evaluate selected benchmarks (set EDGE_PATH for D2).
+- `graph_diffusion/sir_times.py` — SIR-aware diffusion in infection/recovery hitting-time space with monotonic projection and final-state constraints.
 
 ## Quick start (conceptual)
 ```bash
@@ -27,6 +28,10 @@ This uses a toy SIR generator and trains the reverse model for a few epochs. At 
 - D1 (synthetic graphs + synthetic diffusion): BA/ER graphs with SI/SIR (T=10, β_I=β_R=0.1, 5% seeds). Use `--benchmark D1-BA-SIR` (or D1-BA-SI/D1-ER-SI/D1-ER-SIR) or call `scripts/run_benchmarks.py --benchmark ...`.
 - D2 (synthetic diffusion on real graphs): Oregon2/Prost. Provide `--edge-path` to an edge list when using `scripts/run_benchmarks.py` with `--benchmark D2-Oregon2-SIR` (or SI).
 - D3 (real diffusion on real graphs): placeholders for BrFarmers, Pol, Covid, Hebrew. Supply preprocessed histories and graphs externally; see URLs in `graph_diffusion/benchmarks.py`.
+
+### Modes
+- `--mode history` (default): diffuse the full history tensor as before.
+- `--mode sir-times`: diffuse normalized infection/recovery hitting times with enforced S→I→R monotonicity and final-snapshot constraints; decode back to histories for evaluation.
 
 ### Evaluation metrics
 `graph_diffusion/metrics.py` implements Macro F1, NRMSE over hitting times, and the performance-gap formula. `scripts/run_benchmarks.py` reports these automatically.

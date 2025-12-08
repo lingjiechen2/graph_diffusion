@@ -52,8 +52,17 @@ class SpaceTimeGNN(nn.Module):
         return A_hat / deg
 
     def forward(self, A: torch.Tensor, Z_k: torch.Tensor, k_index: torch.Tensor) -> torch.Tensor:
-        B, N, T_plus_1, d_s = Z_k.shape
-        flat = Z_k.view(B, N, -1)
+        if Z_k.dim() == 4:
+            B, N, T_plus_1, d_s = Z_k.shape
+            flat = Z_k.view(B, N, -1)
+            out_shape = (B, N, T_plus_1, d_s)
+        elif Z_k.dim() == 3:
+            B, N, feat = Z_k.shape
+            flat = Z_k
+            out_shape = (B, N, feat)
+        else:
+            raise ValueError(f"Z_k must be (B,N,T+1,d) or (B,N,feat); got {Z_k.shape}")
+
         h = self.encoder(flat)
 
         A_norm = self._normalize_adj(A)
@@ -68,4 +77,4 @@ class SpaceTimeGNN(nn.Module):
             h = self.dropout(h)
 
         out = self.decoder(h)
-        return out.view(B, N, T_plus_1, d_s)
+        return out.view(*out_shape)

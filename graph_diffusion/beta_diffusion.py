@@ -96,6 +96,9 @@ class HistoryBetaDiffusion:
         A: torch.Tensor,
         Y: torch.Tensor,
         k: Optional[int] = None,
+        project_fn=None,
+        penalty_fn=None,
+        penalty_weight: float = 0.0,
     ) -> Tuple[torch.Tensor, dict]:
         """
         Compute KLUB loss for a random diffusion level k.
@@ -110,6 +113,8 @@ class HistoryBetaDiffusion:
         # Predict denoised history.
         k_tensor = torch.full((Y.size(0),), k, device=Y.device, dtype=torch.long)
         Y_hat = model(A, Z_k, k_tensor)
+        if project_fn is not None:
+            Y_hat = project_fn(Y_hat)
         a_pred, b_pred = self.reverse_params(Y_hat, k)
 
         kl = beta_kl(a_true, b_true, a_pred, b_pred)
@@ -118,10 +123,16 @@ class HistoryBetaDiffusion:
         Zk_clamped = Z_k.clamp(min=EPS, max=1 - EPS)
         correction = -torch.log1p(-Zk_clamped)
         loss = (kl + correction).mean()
+        penalty_val = 0.0
+        if penalty_fn is not None and penalty_weight > 0:
+            penalty = penalty_fn(Y_hat)
+            penalty_val = penalty.item()
+            loss = loss + penalty_weight * penalty
         metrics = {
             "kl": kl.mean().item(),
             "correction": correction.mean().item(),
             "k": k,
+            "penalty": penalty_val,
         }
         return loss, metrics
 

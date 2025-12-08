@@ -57,8 +57,9 @@ def compute_nrmse(
 ) -> float:
     """
     Normalized RMSE of hitting times for infected and recovered states.
-    Args:
-        y_true, y_pred: histories (B,N,T+1,d_s)
+    Implements Eq. (26) from DITTO:
+        sqrt( sum_u [(h^I_true - h^I_pred)^2 + (h^R_true - h^R_pred)^2] / [2 n (T+1)]^2 )
+    We compute per-graph NRMSE then average over the batch.
     """
     true_labels = _to_labels(y_true)
     pred_labels = _to_labels(y_pred)
@@ -69,8 +70,8 @@ def compute_nrmse(
     hit_pred_R = _hitting_time(pred_labels, recovered_idx)
     num = (hit_true_I - hit_pred_I).pow(2) + (hit_true_R - hit_pred_R).pow(2)
     denom = (2 * N * T_plus_1) ** 2
-    rmse = torch.sqrt(num.sum() / denom)
-    return float(rmse)
+    rmse_per_graph = torch.sqrt(num.sum(dim=1) / denom)  # shape (B,)
+    return float(rmse_per_graph.mean())
 
 
 def performance_gap(score: float, ideal: float, higher_is_better: bool = True) -> float:

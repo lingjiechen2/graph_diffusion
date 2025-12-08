@@ -20,6 +20,7 @@ STEPS="${STEPS:-200}"
 ETA="${ETA:-40}"
 BATCH="${BATCH:-8}"
 EVAL_SAMPLES="${EVAL_SAMPLES:-0}"
+MODE="${MODE:-history}"
 SAVE_DIR="${SAVE_DIR:-runs}"
 mkdir -p "$SAVE_DIR"
 
@@ -33,6 +34,7 @@ for BM in "${BENCHMARKS[@]}"; do
     --eta "${ETA}" \
     --batch-size "${BATCH}" \
     --device "${DEVICE}" \
+    --mode "${MODE}" \
     --eval-samples "${EVAL_SAMPLES}" \
     ${EDGE_PATH:+--edge-path "${EDGE_PATH}"} \
     --save-path "${CKPT}"
@@ -44,5 +46,6 @@ for BM in "${BENCHMARKS[@]}"; do
     --eta "${ETA}" \
     --device "${DEVICE}" \
     --checkpoint "${CKPT}" \
+    --mode "${MODE}" \
     ${EDGE_PATH:+--edge-path "${EDGE_PATH}"}
 done

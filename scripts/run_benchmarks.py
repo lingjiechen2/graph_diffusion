@@ -15,6 +15,7 @@ from graph_diffusion.metrics import evaluate_history
 from graph_diffusion.model import SpaceTimeGNN
 from graph_diffusion.sampling import sample_history
 from graph_diffusion.schedules import make_alpha_schedule
+from graph_diffusion.sir_times import decode_hitting_times, sample_sir_times
 
 
 def parse_args():
@@ -26,11 +27,16 @@ def parse_args():
     p.add_argument("--device", type=str, default="cpu")
     p.add_argument("--num-samples", type=int, default=4, help="Number of histories to sample/evaluate.")
     p.add_argument("--edge-path", type=str, default=None, help="Path to edge list for external graphs (D2).")
+    p.add_argument("--mode", type=str, default="history", choices=["history", "sir-times"], help="Evaluation space.")
     return p.parse_args()
 
 
 def load_model(spec: BenchmarkSpec, timesteps: int, args) -> SpaceTimeGNN:
-    model = SpaceTimeGNN(history_dim=(timesteps + 1) * spec.history_dim, hidden_dim=128, num_layers=3)
+    if args.mode == "sir-times":
+        dim = 2
+    else:
+        dim = (timesteps + 1) * spec.history_dim
+    model = SpaceTimeGNN(history_dim=dim, hidden_dim=128, num_layers=3)
     if args.checkpoint:
         ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=True)
         model.load_state_dict(ckpt)
@@ -54,10 +60,15 @@ def main():
     for batch in loader:
         Y_true = batch["Y"].to(device)
         A = batch["A"].to(device)
-        mask = torch.zeros_like(Y_true)
-        mask[:, :, -1, :] = 1.0
-        Y_obs = mask * Y_true
-        Y_pred = sample_history(diffusion, model, A, Y_obs, mask)
+        if args.mode == "sir-times":
+            final_snapshot = Y_true[:, :, -1, :]
+            Y_times = sample_sir_times(diffusion, model, A, final_snapshot, spec.timesteps, num_steps=args.num_steps)
+            Y_pred = decode_hitting_times(Y_times, spec.timesteps)
+        else:
+            mask = torch.zeros_like(Y_true)
+            mask[:, :, -1, :] = 1.0
+            Y_obs = mask * Y_true
+            Y_pred = sample_history(diffusion, model, A, Y_obs, mask)
         metrics = evaluate_history(Y_true, Y_pred)
         results.append(metrics)
         print(f"Sample metrics: {metrics}")

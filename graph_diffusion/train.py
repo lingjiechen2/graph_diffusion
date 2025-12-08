@@ -12,6 +12,13 @@ from .metrics import evaluate_history
 from .model import SpaceTimeGNN
 from .sampling import sample_history
 from .schedules import make_alpha_schedule
+from .sir_times import (
+    decode_hitting_times,
+    encode_hitting_times,
+    monotonic_penalty,
+    project_monotonic_times,
+    sample_sir_times,
+)
 
 
 def parse_args():
@@ -36,6 +43,8 @@ def parse_args():
     p.add_argument("--seed", type=int, default=42, help="Global random seed.")
     p.add_argument("--grad-clip", type=float, default=1.0, help="Gradient clip norm (0 to disable).")
     p.add_argument("--eval-samples", type=int, default=0, help="If >0, run sampling/eval on this many batches after training.")
+    p.add_argument("--mode", type=str, default="history", choices=["history", "sir-times"], help="Diffusion space: full history or SIR hitting times.")
+    p.add_argument("--mono-weight", type=float, default=0.0, help="Optional weight for monotonicity penalty (sir-times mode).")
     return p.parse_args()
 
 
@@ -82,7 +91,12 @@ def train_loop():
     alphas = make_alpha_schedule(args.num_steps)
     diffusion = HistoryBetaDiffusion(eta=args.eta, alphas=alphas.to(device))
 
-    model = SpaceTimeGNN(history_dim=(timesteps + 1) * history_dim, hidden_dim=128, num_layers=3).to(device)
+    state_dim = history_dim
+    if args.mode == "sir-times":
+        model_input_dim = 2
+    else:
+        model_input_dim = (timesteps + 1) * state_dim
+    model = SpaceTimeGNN(history_dim=model_input_dim, hidden_dim=128, num_layers=3).to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -92,7 +106,18 @@ def train_loop():
             Y = batch["Y"].to(device)  # (B,N,T+1,d_s)
             A = batch["A"].to(device)
             opt.zero_grad()
-            loss, metrics = diffusion.klub_loss(model, A, Y)
+            if args.mode == "sir-times":
+                Y_enc = encode_hitting_times(Y)
+                loss, metrics = diffusion.klub_loss(
+                    model,
+                    A,
+                    Y_enc,
+                    project_fn=project_monotonic_times,
+                    penalty_fn=monotonic_penalty,
+                    penalty_weight=args.mono_weight,
+                )
+            else:
+                loss, metrics = diffusion.klub_loss(model, A, Y)
             loss.backward()
             if args.grad_clip and args.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
@@ -120,10 +145,15 @@ def train_loop():
                     break
                 Y_true = batch["Y"].to(device)
                 A = batch["A"].to(device)
-                mask = torch.zeros_like(Y_true)
-                mask[:, :, -1, :] = 1.0
-                Y_obs = mask * Y_true
-                Y_pred = sample_history(diffusion, model, A, Y_obs, mask)
+                if args.mode == "sir-times":
+                    final_snapshot = Y_true[:, :, -1, :]
+                    Y_times = sample_sir_times(diffusion, model, A, final_snapshot, timesteps, num_steps=args.num_steps)
+                    Y_pred = decode_hitting_times(Y_times, timesteps)
+                else:
+                    mask = torch.zeros_like(Y_true)
+                    mask[:, :, -1, :] = 1.0
+                    Y_obs = mask * Y_true
+                    Y_pred = sample_history(diffusion, model, A, Y_obs, mask)
                 metrics_eval = evaluate_history(Y_true, Y_pred)
                 results.append(metrics_eval)
                 print(f"[eval sample {i}] {metrics_eval}")
