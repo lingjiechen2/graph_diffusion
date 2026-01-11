@@ -57,21 +57,30 @@ def compute_nrmse(
 ) -> float:
     """
     Normalized RMSE of hitting times for infected and recovered states.
-    Implements Eq. (26) from DITTO:
-        sqrt( sum_u [(h^I_true - h^I_pred)^2 + (h^R_true - h^R_pred)^2] / [2 n (T+1)]^2 )
+
+    DITTO Eq.(26) (as used in their experiments):
+        NRMSE = sqrt( sum_u [(hI_true-hI_pred)^2 + (hR_true-hR_pred)^2] / (2*n*(T+1)^2) )
+
     We compute per-graph NRMSE then average over the batch.
     """
     true_labels = _to_labels(y_true)
     pred_labels = _to_labels(y_pred)
     B, N, T_plus_1 = true_labels.shape
+
     hit_true_I = _hitting_time(true_labels, infected_idx)
     hit_pred_I = _hitting_time(pred_labels, infected_idx)
     hit_true_R = _hitting_time(true_labels, recovered_idx)
     hit_pred_R = _hitting_time(pred_labels, recovered_idx)
-    num = (hit_true_I - hit_pred_I).pow(2) + (hit_true_R - hit_pred_R).pow(2)
-    denom = (2 * N * T_plus_1) ** 2
-    rmse_per_graph = torch.sqrt(num.sum(dim=1) / denom)  # shape (B,)
+
+    # (B, N)
+    sq_err = (hit_true_I - hit_pred_I).pow(2) + (hit_true_R - hit_pred_R).pow(2)
+
+    # Eq.(26): denominator inside sqrt is 2*n*(T+1)^2
+    denom = 2.0 * float(N) * float(T_plus_1 * T_plus_1)
+
+    rmse_per_graph = torch.sqrt(sq_err.sum(dim=1) / denom)  # (B,)
     return float(rmse_per_graph.mean())
+
 
 
 def performance_gap(score: float, ideal: float, higher_is_better: bool = True) -> float:

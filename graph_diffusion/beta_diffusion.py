@@ -96,6 +96,10 @@ class HistoryBetaDiffusion:
         A: torch.Tensor,
         Y: torch.Tensor,
         k: Optional[int] = None,
+        # --- conditional inpainting inputs (history mode) ---
+        Y_obs: Optional[torch.Tensor] = None,
+        mask: Optional[torch.Tensor] = None,
+        cond_drop_prob: float = 0.0,
         project_fn=None,
         penalty_fn=None,
         penalty_weight: float = 0.0,
@@ -110,9 +114,34 @@ class HistoryBetaDiffusion:
         Z_k = self.sample_marginal(Y, k)
         a_true, b_true = self.posterior_params(Y, Z_k, k)
 
+        # If conditional inpainting is enabled, inject the observation *during training*.
+        # This makes training match sampling-time conditioning.
+        X_k = Z_k
+        used_cond = False
+        if (Y_obs is not None) and (mask is not None):
+            used_cond = True
+            # Optional classifier-free conditioning dropout.
+            if cond_drop_prob > 0.0:
+                drop = (torch.rand((), device=Y.device) < cond_drop_prob).item()
+            else:
+                drop = False
+
+            if drop:
+                Y_obs_eff = torch.zeros_like(Y_obs)
+                mask_eff = torch.zeros_like(mask)
+            else:
+                # Keep observation values inside (0,1) for numeric stability.
+                Y_obs_eff = Y_obs.clamp(min=EPS, max=1 - EPS)
+                mask_eff = mask
+
+            # Clamp the observed entries to the clean observation.
+            Z_k_inpaint = (mask_eff * Y_obs_eff + (1 - mask_eff) * Z_k).clamp(min=EPS, max=1 - EPS)
+            # Feed the model explicit condition channels: [Z_k_inpaint, Y_obs, mask].
+            X_k = torch.cat([Z_k_inpaint, Y_obs_eff, mask_eff], dim=-1)
+
         # Predict denoised history.
         k_tensor = torch.full((Y.size(0),), k, device=Y.device, dtype=torch.long)
-        Y_hat = model(A, Z_k, k_tensor)
+        Y_hat = model(A, X_k, k_tensor)
         if project_fn is not None:
             Y_hat = project_fn(Y_hat)
         a_pred, b_pred = self.reverse_params(Y_hat, k)
@@ -122,12 +151,21 @@ class HistoryBetaDiffusion:
         # Correction term from KLUB: change-of-variable from V to Z_{k-1}.
         Zk_clamped = Z_k.clamp(min=EPS, max=1 - EPS)
         correction = -torch.log1p(-Zk_clamped)
-        loss = (kl + correction).mean()
+
+        # If we are conditioning on observed entries, only score the unobserved region.
+        loss_terms = kl + correction
+        if used_cond:
+            unobs = (1 - mask_eff).detach()
+            loss = (loss_terms * unobs).sum() / (unobs.sum() + 1e-8)
+        else:
+            loss = loss_terms.mean()
+
         penalty_val = 0.0
         if penalty_fn is not None and penalty_weight > 0:
             penalty = penalty_fn(Y_hat)
             penalty_val = penalty.item()
             loss = loss + penalty_weight * penalty
+
         metrics = {
             "kl": kl.mean().item(),
             "correction": correction.mean().item(),

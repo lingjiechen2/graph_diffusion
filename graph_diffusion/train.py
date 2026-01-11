@@ -9,7 +9,7 @@ from .beta_diffusion import HistoryBetaDiffusion
 from .benchmarks import BENCHMARKS, BenchmarkSpec, make_dataset_from_spec
 from .data import SyntheticHistoryDataset, random_graph
 from .metrics import evaluate_history
-from .model import SpaceTimeGNN
+from .model import HistoryInpaintGNN, SpaceTimeGNN
 from .sampling import sample_history
 from .schedules import make_alpha_schedule
 from .sir_times import (
@@ -19,6 +19,7 @@ from .sir_times import (
     project_monotonic_times,
     sample_sir_times,
 )
+from .sir_history_rules import sir_history_penalty
 
 
 def parse_args():
@@ -45,6 +46,12 @@ def parse_args():
     p.add_argument("--eval-samples", type=int, default=0, help="If >0, run sampling/eval on this many batches after training.")
     p.add_argument("--mode", type=str, default="history", choices=["history", "sir-times"], help="Diffusion space: full history or SIR hitting times.")
     p.add_argument("--mono-weight", type=float, default=0.0, help="Optional weight for monotonicity penalty (sir-times mode).")
+    # --- history-mode conditioning + SIR-rule regularization ---
+    p.add_argument("--cond-drop-prob", type=float, default=0.0, help="Classifier-free conditioning dropout prob (history mode).")
+    p.add_argument("--time-embed-dim", type=int, default=16, help="True-time positional embedding dim (history mode).")
+    p.add_argument("--sir-rule-weight", type=float, default=0.0, help="Weight for SIR transition penalties (history mode).")
+    p.add_argument("--sir-mono-w", type=float, default=1.0, help="Relative weight for S non-increasing / R non-decreasing.")
+    p.add_argument("--sir-dyn-w", type=float, default=1.0, help="Relative weight for mean-field neighbor-driven dynamics.")
     return p.parse_args()
 
 
@@ -93,10 +100,17 @@ def train_loop():
 
     state_dim = history_dim
     if args.mode == "sir-times":
-        model_input_dim = 2
+        model = SpaceTimeGNN(feature_dim=2, hidden_dim=128, num_layers=3).to(device)
     else:
-        model_input_dim = (timesteps + 1) * state_dim
-    model = SpaceTimeGNN(history_dim=model_input_dim, hidden_dim=128, num_layers=3).to(device)
+        # history mode: conditional + time-aware + simplex output
+        model = HistoryInpaintGNN(
+            timesteps=timesteps,
+            state_dim=state_dim,
+            cond_components=2,  # [Y_obs, mask] in addition to Z_k
+            time_embed_dim=args.time_embed_dim,
+            hidden_dim=128,
+            num_layers=3,
+        ).to(device)
 
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
 
@@ -117,7 +131,36 @@ def train_loop():
                     penalty_weight=args.mono_weight,
                 )
             else:
-                loss, metrics = diffusion.klub_loss(model, A, Y)
+                # Condition on the final snapshot DURING TRAINING (not only at sampling time).
+                mask = torch.zeros_like(Y)
+                mask[:, :, -1, :] = 1.0
+                Y_obs = mask * Y
+
+                # Optional: explicitly inject SIR transition knowledge as a regularizer.
+                if args.model_type.lower() == "sir" and state_dim == 3 and args.sir_rule_weight > 0:
+                    penalty_fn = lambda Y_hat: sir_history_penalty(
+                        Y_hat,
+                        A,
+                        beta=args.infection_rate,
+                        gamma=args.recovery_rate,
+                        w_mono=args.sir_mono_w,
+                        w_dyn=args.sir_dyn_w,
+                    )
+                    penalty_weight = args.sir_rule_weight
+                else:
+                    penalty_fn = None
+                    penalty_weight = 0.0
+
+                loss, metrics = diffusion.klub_loss(
+                    model,
+                    A,
+                    Y,
+                    Y_obs=Y_obs,
+                    mask=mask,
+                    cond_drop_prob=args.cond_drop_prob,
+                    penalty_fn=penalty_fn,
+                    penalty_weight=penalty_weight,
+                )
             loss.backward()
             if args.grad_clip and args.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)

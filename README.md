@@ -19,8 +19,19 @@ This project implements the “graph-shaped tensor” formulation of Graph Beta 
 ## Quick start (conceptual)
 ```bash
 python -m graph_diffusion.train \
-  --num-nodes 32 --timesteps 6 --history-dim 3 \
-  --num-steps 200 --eta 40.0 --lr 1e-3 --epochs 10
+  --mode history \
+  --model-type sir \
+  --benchmark D1-BA-SIR \
+  --num-steps 400 \
+  --eta 40 \
+  --batch-size 8 \
+  --epochs 10 \
+  --lr 1e-3 \
+  --cond-drop-prob 0.1 \
+  --time-embed-dim 16 \
+  --sir-rule-weight 0.0 \
+  --eval-samples 3 \
+  --device cuda
 ```
 This uses a toy SIR generator and trains the reverse model for a few epochs. At inference, pass an observed final snapshot to `sample_history` to reconstruct plausible histories.
 
