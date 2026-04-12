@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 
 
@@ -62,7 +63,10 @@ def sir_history(
         infected = states == 1
         susceptible = states == 0
         if infected.any():
-            neigh_prob = infection_rate * A[infected].float().sum(0)
+            num_infected_neighbors = A[infected].float().sum(0)
+            # Correct independent-channel model: P(infect) = 1 - (1-beta)^m
+            neigh_prob = 1.0 - (1.0 - infection_rate) ** num_infected_neighbors
+            neigh_prob = neigh_prob.clamp(0.0, 1.0)
             probs = torch.rand_like(neigh_prob)
             new_infections = (probs < neigh_prob) & susceptible
         else:
@@ -75,6 +79,62 @@ def sir_history(
         states[new_infections] = 1
         states[recoveries] = 2
     return Y
+
+
+def load_ditto_adjacency(pt_path: str, device=None) -> torch.Tensor:
+    """
+    Load a dense adjacency matrix from a DITTO .pt file (torch_geometric Data).
+    Returns A: (N, N) float symmetric adjacency.
+    Requires torch_geometric to be installed.
+    """
+    data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    N = data.num_nodes
+    edge_index = data.edge_index  # (2, E), both directions already stored
+    A = torch.zeros(N, N)
+    A[edge_index[0], edge_index[1]] = 1.0
+    if device is not None:
+        A = A.to(device)
+    return A
+
+
+def load_ditto_history(pt_path: str, device=None):
+    """
+    Load (A, Y, T) from a DITTO .pt file.
+    A: (N, N) float, symmetric adjacency.
+    Y: (N, T+1, 3) float, one-hot history (always 3 channels for S/I/R).
+    T: int, epidemic timespan.
+    Requires torch_geometric to be installed.
+    """
+    data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    N = data.num_nodes
+    T = int(data.T.item())
+    edge_index = data.edge_index
+    A = torch.zeros(N, N)
+    A[edge_index[0], edge_index[1]] = 1.0
+    # data.y is (N, T+1) int64 with values in {0,1} (SI) or {0,1,2} (SIR).
+    # Always encode as 3-channel one-hot so formats are uniform.
+    Y = F.one_hot(data.y.long(), num_classes=3).float()  # (N, T+1, 3)
+    if device is not None:
+        A = A.to(device)
+        Y = Y.to(device)
+    return A, Y, T
+
+
+class RealHistoryDataset(Dataset):
+    """
+    Dataset wrapping a single real diffusion history (D3 evaluation).
+    __len__ returns 1; can be used directly with DataLoader for evaluation.
+    """
+
+    def __init__(self, A: torch.Tensor, Y: torch.Tensor):
+        self.A = A
+        self.Y = Y  # (N, T+1, d_s)
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, idx):
+        return {"Y": self.Y, "A": self.A}
 
 
 class SyntheticHistoryDataset(Dataset):
@@ -106,8 +166,10 @@ class SyntheticHistoryDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # deterministic seed per sample for reproducibility
-        seed = self.seed + idx
+        # Use a random seed each call so every epoch sees fresh epidemic simulations
+        # (avoids memorisation of a fixed 256-sample set).
+        import random
+        seed = random.randint(0, 2**31 - 1)
         Y = sir_history(
             self.A,
             self.timesteps,

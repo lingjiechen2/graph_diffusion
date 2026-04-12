@@ -2,14 +2,22 @@ import argparse
 import os
 from typing import Tuple
 
+try:
+    import wandb
+    _WANDB_AVAILABLE = True
+except ImportError:
+    _WANDB_AVAILABLE = False
+
 import torch
 from torch.utils.data import DataLoader
 
 from .beta_diffusion import HistoryBetaDiffusion
-from .benchmarks import BENCHMARKS, BenchmarkSpec, make_dataset_from_spec
+from .benchmarks import BENCHMARKS, BenchmarkSpec, load_real_history_from_spec, make_dataset_from_spec
 from .data import SyntheticHistoryDataset, random_graph
 from .metrics import evaluate_history
 from .model import HistoryInpaintGNN, SpaceTimeGNN
+from .model_st import STGraphTransformer
+from .model_digress import DigressSTTransformer
 from .sampling import sample_history
 from .schedules import make_alpha_schedule
 from .sir_times import (
@@ -45,6 +53,13 @@ def parse_args():
     p.add_argument("--grad-clip", type=float, default=1.0, help="Gradient clip norm (0 to disable).")
     p.add_argument("--eval-samples", type=int, default=0, help="If >0, run sampling/eval on this many batches after training.")
     p.add_argument("--mode", type=str, default="history", choices=["history", "sir-times"], help="Diffusion space: full history or SIR hitting times.")
+    p.add_argument("--ditto-dir", type=str, default=None, help="Path to KDD23-DITTO input/ directory (required for D2/D3 benchmarks).")
+    p.add_argument("--eval-real", action="store_true", default=False, help="For D3 benchmarks: evaluate on the single real history instead of synthetic.")
+    p.add_argument("--backbone", type=str, default="inpaint", choices=["inpaint", "st", "digress"],
+                   help="Denoiser backbone: inpaint=HistoryInpaintGNN (baseline), st=STGraphTransformer, digress=DigressSTTransformer.")
+    p.add_argument("--edge-dim", type=int, default=16, help="Edge feature dimension (digress backbone only).")
+    p.add_argument("--num-heads", type=int, default=4, help="Attention heads (st backbone only).")
+    p.add_argument("--ffn-mult", type=int, default=2, help="FFN hidden multiplier (st backbone only).")
     p.add_argument("--mono-weight", type=float, default=0.0, help="Optional weight for monotonicity penalty (sir-times mode).")
     # --- history-mode conditioning + SIR-rule regularization ---
     p.add_argument("--cond-drop-prob", type=float, default=0.0, help="Classifier-free conditioning dropout prob (history mode).")
@@ -52,6 +67,9 @@ def parse_args():
     p.add_argument("--sir-rule-weight", type=float, default=0.0, help="Weight for SIR transition penalties (history mode).")
     p.add_argument("--sir-mono-w", type=float, default=1.0, help="Relative weight for S non-increasing / R non-decreasing.")
     p.add_argument("--sir-dyn-w", type=float, default=1.0, help="Relative weight for mean-field neighbor-driven dynamics.")
+    # --- wandb logging ---
+    p.add_argument("--wandb", action="store_true", default=False, help="Enable Weights & Biases logging.")
+    p.add_argument("--wandb-project", type=str, default="graph-diffusion", help="W&B project name.")
     return p.parse_args()
 
 
@@ -61,7 +79,7 @@ def make_dataloader(args) -> Tuple[DataLoader, torch.Tensor, int, int]:
     g = torch.Generator().manual_seed(args.seed)
     if args.benchmark:
         spec: BenchmarkSpec = BENCHMARKS[args.benchmark]
-        dataset = make_dataset_from_spec(spec, num_samples=256, device=device, edge_path=args.edge_path)
+        dataset = make_dataset_from_spec(spec, num_samples=256, device=device, ditto_dir=args.ditto_dir)
         A = dataset.A
         history_dim = spec.history_dim
         timesteps = spec.timesteps
@@ -94,6 +112,13 @@ def train_loop():
     torch.cuda.manual_seed_all(args.seed)
 
     device = torch.device(args.device)
+
+    # Initialise W&B run (opt-in via --wandb flag)
+    use_wandb = args.wandb and _WANDB_AVAILABLE
+    if use_wandb:
+        run_name = f"{args.benchmark or 'custom'}-{args.backbone}"
+        wandb.init(project=args.wandb_project, name=run_name, config=vars(args))
+
     loader, A_full, history_dim, timesteps = make_dataloader(args)
     alphas = make_alpha_schedule(args.num_steps)
     diffusion = HistoryBetaDiffusion(eta=args.eta, alphas=alphas.to(device))
@@ -101,6 +126,47 @@ def train_loop():
     state_dim = history_dim
     if args.mode == "sir-times":
         model = SpaceTimeGNN(feature_dim=2, hidden_dim=128, num_layers=3).to(device)
+    elif args.backbone == "st":
+        model = STGraphTransformer(
+            timesteps=timesteps,
+            state_dim=state_dim,
+            cond_components=2,
+            time_embed_dim=args.time_embed_dim,
+            hidden_dim=128,
+            num_layers=4,
+            num_heads=args.num_heads,
+            ffn_mult=args.ffn_mult,
+            dropout=0.1,
+        ).to(device)
+        # For large sparse graphs, precompute D^{-1}(A+I) edge weights so that
+        # graph conv runs in O(E·H) instead of O(N²·H).
+        A_full_dev = A_full.to(device)
+        N_nodes = A_full_dev.size(0)
+        if N_nodes > 2000:
+            edge_index_sp = A_full_dev.nonzero(as_tuple=False).t().contiguous()
+            model.precompute_graph(edge_index_sp, N_nodes)
+            print(f"[sparse graph conv enabled] N={N_nodes}, E={edge_index_sp.size(1)}")
+        del A_full_dev
+    elif args.backbone == "digress":
+        model = DigressSTTransformer(
+            timesteps=timesteps,
+            state_dim=state_dim,
+            cond_components=2,
+            time_embed_dim=args.time_embed_dim,
+            hidden_dim=128,
+            edge_dim=args.edge_dim,
+            num_layers=4,
+            num_heads=args.num_heads,
+            ffn_mult=args.ffn_mult,
+            dropout=0.1,
+        ).to(device)
+        # DiGress always uses sparse edge-indexed graph conv (requires edge features)
+        A_full_dev = A_full.to(device)
+        N_nodes = A_full_dev.size(0)
+        edge_index_sp = A_full_dev.nonzero(as_tuple=False).t().contiguous()
+        model.precompute_graph(edge_index_sp, N_nodes)
+        print(f"[digress sparse GT] N={N_nodes}, E={edge_index_sp.size(1)}")
+        del A_full_dev
     else:
         # history mode: conditional + time-aware + simplex output
         model = HistoryInpaintGNN(
@@ -167,7 +233,9 @@ def train_loop():
             opt.step()
             total_loss += loss.item() * Y.size(0)
         avg = total_loss / len(loader.dataset)
-        print(f"epoch {epoch+1} | loss {avg:.4f} | k {metrics['k']} kl {metrics['kl']:.4f}")
+        print(f"epoch {epoch+1} | loss {avg:.4f} | k {metrics['k']} kl {metrics['kl']:.4f}", flush=True)
+        if use_wandb:
+            wandb.log({"train/loss": avg, "train/kl": metrics["kl"], "train/k": metrics["k"]}, step=epoch + 1)
 
     # decide save path if not provided
     if args.save_path is None:
@@ -178,14 +246,26 @@ def train_loop():
     torch.save(model.state_dict(), args.save_path)
     print(f"Saved checkpoint to {args.save_path}")
 
-    # optional quick evaluation on a few batches from the same generator
+    # optional quick evaluation on a few batches after training
     if args.eval_samples > 0:
         model.eval()
         results = []
-        with torch.no_grad():
+        # For D3 with --eval-real: evaluate on the single real history.
+        eval_spec = BENCHMARKS.get(args.benchmark) if args.benchmark else None
+        if args.eval_real and eval_spec is not None and eval_spec.graph_type == "ditto_real":
+            from torch.utils.data import DataLoader as _DL
+            real_ds = load_real_history_from_spec(eval_spec, device=device, ditto_dir=args.ditto_dir)
+            eval_loader = _DL(real_ds, batch_size=1, shuffle=False)
+            eval_batches = list(eval_loader)  # just 1 sample
+        else:
+            eval_batches = []
             for i, batch in enumerate(loader):
                 if i >= args.eval_samples:
                     break
+                eval_batches.append({k: v.to(device) for k, v in batch.items()})
+
+        with torch.no_grad():
+            for i, batch in enumerate(eval_batches):
                 Y_true = batch["Y"].to(device)
                 A = batch["A"].to(device)
                 if args.mode == "sir-times":
@@ -203,6 +283,11 @@ def train_loop():
         if results:
             agg = {k: sum(m[k] for m in results) / len(results) for k in results[0]}
             print(f"[eval avg over {len(results)}] {agg}")
+            if use_wandb:
+                wandb.log({f"eval/{k}": v for k, v in agg.items()})
+
+    if use_wandb:
+        wandb.finish()
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@ from typing import Optional
 import torch
 
 from .beta_diffusion import HistoryBetaDiffusion, EPS
-from .model import HistoryInpaintGNN
 
 
 @torch.no_grad()
@@ -43,8 +42,10 @@ def sample_history(
         # Inpainting-style conditioning: keep observed entries fixed.
         Z_k = (mask * Y_obs + (1 - mask) * Z_k).clamp(min=EPS, max=1 - EPS)
 
-        # If the model is the history-conditional denoiser, provide explicit condition channels.
-        if isinstance(model, HistoryInpaintGNN):
+        # Models that declare in_state_dim > state_dim expect explicit condition channels
+        # [Z_k_inpaint | Y_obs | mask] concatenated on the last axis.
+        # Both HistoryInpaintGNN and STGraphTransformer carry this attribute.
+        if hasattr(model, "in_state_dim"):
             X_k = torch.cat([Z_k, Y_obs, mask], dim=-1)
         else:
             X_k = Z_k
