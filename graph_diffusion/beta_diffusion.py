@@ -176,8 +176,18 @@ class HistoryBetaDiffusion:
 
     def prior(self, shape: torch.Size, device=None) -> torch.Tensor:
         """
-        Stationary-like prior for Z_K; simple symmetric Beta fallback.
+        Sample from the forward marginal q(Z_K | Y) at step K, marginalised over Y.
+
+        At step K the marginal is Beta(eta * alpha_K * mean, eta * (1 - alpha_K * mean))
+        where mean = 1/d_s is the uninformative (uniform) state prior.
+        With alpha_K ≈ 0.001 this yields a distribution highly concentrated near 0,
+        which matches the actual end-state of the forward process.
         """
-        a = torch.full(shape, 0.5 * self.eta, device=device)
-        b = torch.full(shape, 0.5 * self.eta, device=device)
-        return _beta_sample(a.clamp(min=EPS), b.clamp(min=EPS))
+        alpha_K = float(self.alphas[-1].item())
+        d_s = shape[-1]
+        mean = 1.0 / d_s  # uniform over states
+        a_val = max(self.eta * alpha_K * mean, EPS)
+        b_val = max(self.eta * (1.0 - alpha_K * mean), EPS)
+        a = torch.full(shape, a_val, device=device)
+        b = torch.full(shape, b_val, device=device)
+        return _beta_sample(a, b)
