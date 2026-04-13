@@ -146,6 +146,7 @@ class HistoryInpaintGNN(nn.Module):
         flat = X.reshape(B, N, -1)
 
         h = self.encoder(flat)
+        h_skip = h  # skip connection: preserve per-node features before GCN smoothing
         A_norm = self._normalize_adj(A)
         if A_norm.size(0) == 1 and B > 1:
             A_norm = A_norm.expand(B, -1, -1)
@@ -156,6 +157,10 @@ class HistoryInpaintGNN(nn.Module):
             h = self_w(h) + neigh_w(m) + step_emb
             h = torch.relu(h)
             h = self.dropout(h)
+
+        # Residual from pre-GCN representation preserves node-specific
+        # final-state information that 3-layer mean aggregation would erase.
+        h = h + h_skip
 
         logits = self.decoder(h).view(B, N, T_plus_1, self.state_dim)
         probs = torch.softmax(logits, dim=-1)
