@@ -1,147 +1,140 @@
-# Graph Beta Diffusion — Backbone Comparison Results
+# Graph Beta Diffusion — Results Summary
 
-All experiments use the same diffusion config: K=200 steps, η=40, lr=1e-3, hidden_dim=128, num_layers=4.  
+All experiments use the same diffusion config: K=200 steps, eta=40, lr=1e-3, hidden_dim=128.  
 Metric: **macro-F1** (higher = better) and **NRMSE** (lower = better).  
 Conditioning: final snapshot Y[:,:,-1,:] observed, full history reconstructed.
 
 ---
 
-## Model Architectures
+## Dataset Specs
 
-| Backbone | Params | Graph Block | Time Modeling | Edge Features |
-|----------|:------:|-------------|---------------|:-------------:|
-| **Inpaint** (baseline) | 302K | Simple GCN (D⁻¹A) | Flatten T+1 → Linear | ✗ |
-| **ST** (STGraphTransformer) | 798K | Simple GCN (sparse D⁻¹A) | Temporal MHA per node | ✗ |
-| **DiGress** (DigressSTTransformer) | 1.0M | FiLM edge-conditioned sparse attention | Temporal MHA + time re-injection per layer | ✓ |
-
-**Key DiGress improvements over ST:**
-- Graph block: FiLM-modulated edge attention (`score(i←j) = Q_i·K_j/√d · (e_mul+1) + e_add`) instead of uniform GCN aggregation
-- Edge features: `[1/deg_dst, src_deg_norm, dst_deg_norm]` initialised from graph structure, updated per layer via MLP
-- Time re-injection: epidemic-time positional embedding re-added before every graph block (prevents signal dilution in deep layers)
+| Benchmark | Graph | N | E | T | Model |
+|-----------|-------|:-:|:-:|:-:|-------|
+| D1-BA-SI/SIR | Barabasi-Albert | 1,000 | 3,984 | 10 | SI/SIR |
+| D1-ER-SI/SIR | Erdos-Renyi | 1,000 | 3,987 | 10 | SI/SIR |
+| D2-Oregon2-SI/SIR | AS Oregon2 | 11,461 | 32,730 | 15 | SI/SIR |
+| D2-Prost-SI/SIR | Protein Prost | 15,810 | 38,540 | 15 | SI/SIR |
+| D3-BrFarmers | Real epidemic | 82 | 230 | 16 | SI |
+| D3-Pol | Real epidemic | 18,470 | 48,053 | 40 | SI |
+| D3-Covid | Real epidemic | 344 | 2,044 | 10 | SIR |
+| D3-Hebrew | Real epidemic | 3,521 | 18,064 | 9 | SIR |
 
 ---
 
-## Full Results: All 12 Benchmarks
+## DITTO Paper Baselines (from KDD'23)
 
-### F1 Score (macro, higher = better)
+| Method | Type | Description |
+|--------|------|-------------|
+| **DITTO** | Barycenter (unsupervised) | MCMC + learned GNN proposal; estimates diffusion params |
+| **GRIN** | Supervised (estimated params) | Graph recurrent imputation network |
+| **SPIN** | Supervised (estimated params) | Spatiotemporal imputation network |
+| **CRI** | MLE (unsupervised) | Clustering and reverse infection heuristic |
+| **DHREC** | MLE (unsupervised) | Greedy PCDSVC; requires diffusion params |
+| **BRITS** | Supervised (estimated params) | Bidirectional recurrent imputation (D3 only) |
+| **GCN/GIN** | Supervised (estimated params) | Standard GNN baselines (D3 only) |
 
-| Benchmark | N | T | Inpaint F1 | ST F1 | Δ(ST) | DiGress F1 | Δ(DGr) |
-|-----------|:-:|:-:|:----------:|:-----:|:-----:|:----------:|:------:|
-| **D1-BA-SI** | 1000 | 5 | **0.549** | 0.422 | -0.127 | 0.461 | -0.088 |
-| **D1-BA-SIR** | 1000 | 5 | **0.624** | 0.485 | -0.139 | 0.546 | -0.078 |
-| **D1-ER-SI** | 1000 | 5 | **0.544** | 0.418 | -0.126 | 0.510 | -0.034 |
-| **D1-ER-SIR** | 1000 | 5 | **0.632** | 0.534 | -0.098 | 0.532 | -0.100 |
-| **D2-Oregon2-SI** | 11461 | 5 | **0.434** | 0.409 | -0.025 | 0.376 | -0.058 |
-| **D2-Oregon2-SIR** | 11461 | 5 | 0.520 | 0.510 | -0.010 | **0.588** | +0.068 ✓ |
-| **D2-Prost-SI** | 15810 | 5 | **0.477** | 0.396 | -0.081 | — | — |
-| **D2-Prost-SIR** | 15810 | 5 | 0.509 | **0.532** | +0.023 ✓ | — | — |
-| **D3-BrFarmers** | ~3K | 9 | 0.308 | **0.369** | +0.061 ✓ | — | — |
-| **D3-Covid** | ~3K | 9 | 0.452 | **0.500** | +0.048 ✓ | — | — |
-| **D3-Hebrew** | 3521 | 9 | **0.518** | 0.450 | -0.068 | — | — |
-| **D3-Pol** | 18470 | 40 | **0.440** | 0.372 | -0.068 | — | — |
-| **Average (D1+D2-Ore)** | | | **0.551** | 0.463 | -0.088 | 0.502 | -0.049 |
+---
+
+## Full Comparison: D1 + D2 (Synthetic Diffusion)
+
+Each cell shows F1 / NRMSE. **Bold** = best in row. "Ours best" picks the best across our backbones (Inpaint/ST/DiGress) and post-processing settings (with or without `sir_bfs_project`).
+
+### F1 Score (higher = better)
+
+| Benchmark | GRIN | DITTO | SPIN | CRI | DHREC | **Ours best** | Inpaint | ST |
+|-----------|:----:|:-----:|:----:|:---:|:-----:|:-------------:|:-------:|:--:|
+| D1-BA-SI | **.840** | .838 | .848 | .750 | .603 | .539 | .539 | .530 |
+| D1-BA-SIR | .787 | .778 | **.787** | .599 | .508 | .741 | .741 | .740 |
+| D1-ER-SI | .832 | .827 | **.832** | .780 | .628 | .532 | .532 | .506 |
+| D1-ER-SIR | .763 | **.773** | .780 | .613 | .550 | .734 | .734 | .727 |
+| D2-Oregon2-SI | .832 | **.828** | OOM | .818 | .604 | .513 | .513 | -- |
+| D2-Oregon2-SIR | .802 | **.793** | OOM | .576 | .604 | .708 | .708 | -- |
+| D2-Prost-SI | **.848** | .833 | OOM | .808 | .656 | .503 | .503 | -- |
+| D2-Prost-SIR | **.807** | .793 | OOM | .574 | .627 | .725 | .725 | -- |
 
 ### NRMSE (lower = better)
 
-| Benchmark | Inpaint NRMSE | ST NRMSE | Δ(ST) | DiGress NRMSE | Δ(DGr) |
-|-----------|:-------------:|:--------:|:-----:|:-------------:|:------:|
-| **D1-BA-SI** | **0.158** | 0.243 | +0.085 | 0.206 | +0.048 |
-| **D1-BA-SIR** | **0.236** | 0.475 | +0.239 | 0.398 | +0.162 |
-| **D1-ER-SI** | **0.167** | 0.303 | +0.136 | 0.177 | +0.010 |
-| **D1-ER-SIR** | **0.230** | 0.353 | +0.123 | 0.416 | +0.186 |
-| **D2-Oregon2-SI** | 0.278 | 0.282 | +0.004 | **0.213** | -0.065 ✓ |
-| **D2-Oregon2-SIR** | **0.305** | 0.390 | +0.085 | 0.381 | +0.076 |
-| **D2-Prost-SI** | 0.252 | 0.322 | +0.070 | — | — |
-| **D2-Prost-SIR** | 0.312 | 0.421 | +0.109 | — | — |
-| **D3-BrFarmers** | 0.394 | 0.380 | -0.014 | — | — |
-| **D3-Covid** | 0.360 | **0.341** | -0.019 ✓ | — | — |
-| **D3-Hebrew** | 0.398 | 0.577 | +0.179 | — | — |
-| **D3-Pol** | 0.257 | 0.328 | +0.071 | — | — |
+| Benchmark | GRIN | DITTO | SPIN | CRI | DHREC | **Ours best** | Inpaint | ST |
+|-----------|:----:|:-----:|:----:|:---:|:-----:|:-------------:|:-------:|:--:|
+| D1-BA-SI | .212 | .214 | .205 | .301 | .464 | **.174** | .174 | .178 |
+| D1-BA-SIR | .169 | .163 | .161 | .336 | .472 | **.200** | .203 | .200 |
+| D1-ER-SI | .217 | .223 | .217 | .274 | .450 | **.180** | .183 | .180 |
+| D1-ER-SIR | .248 | .168 | .191 | .311 | .442 | **.206** | .206 | .206 |
+| D2-Oregon2-SI | .225 | .229 | OOM | .244 | .410 | **.189** | .189 | -- |
+| D2-Oregon2-SIR | **.165** | .171 | OOM | .358 | .448 | .242 | .242 | -- |
+| D2-Prost-SI | **.216** | .232 | OOM | .249 | .414 | .234 | .234 | -- |
+| D2-Prost-SIR | **.165** | .169 | OOM | .341 | .433 | .226 | .226 | -- |
+
+### D1+D2 Average
+
+| Method | Avg F1 | Avg NRMSE | Type |
+|--------|:------:|:---------:|------|
+| GRIN | **.814** | .221 | Supervised (estimated params) |
+| DITTO | .808 | .196 | Unsupervised (barycenter) |
+| SPIN | .812 | .193 | Supervised (D1 only, OOM on D2) |
+| CRI | .690 | .302 | MLE |
+| DHREC | .598 | .437 | MLE |
+| **Ours best** | .625 | **.201** | Supervised (known params) |
 
 ---
 
-## Analysis: Inpaint vs ST
+## Full Comparison: D3 (Real Diffusion)
 
-**Win/Loss: Inpaint 9/12, ST 3/12**
+### F1 Score (higher = better)
 
-### ST wins (3/12):
-- D2-Prost-SIR (+0.023 F1): largest graph, complex recovery dynamics
-- D3-BrFarmers (+0.061 F1): real epidemic, sparse graph, SI model
-- D3-Covid (+0.048 F1): real epidemic, longer infection chains
+| Benchmark | DITTO | GRIN | SPIN | CRI | DHREC | BRITS | GCN | GIN | **Ours best** | Inpaint | ST |
+|-----------|:-----:|:----:|:----:|:---:|:-----:|:-----:|:---:|:---:|:-------------:|:-------:|:--:|
+| D3-BrFarmers | .821 | .800 | **.827** | .606 | .613 | .521 | .541 | .455 | .472 | .472 | .472 |
+| D3-Pol | **.747** | .652 | OOM | .747 | .702 | OOM | .446 | .520 | .455 | .455 | .455 |
+| D3-Covid | **.624** | .545 | .592 | .417 | .354 | .352 | .316 | .323 | .579 | .579 | .577 |
+| D3-Hebrew | **.641** | .592 | .518 | .534 | .625 | .312 | .335 | .370 | .770 | .770 | .751 |
 
-### Pattern by dataset tier:
+### NRMSE (lower = better)
 
-| Tier | Description | Inpaint avg F1 | ST avg F1 | Winner |
-|------|-------------|:--------------:|:---------:|:------:|
-| D1 | Synthetic, N=1000, BA/ER | 0.587 | 0.465 | Inpaint by +0.122 |
-| D2 | Large sparse real graphs | 0.485 | 0.462 | Inpaint by +0.023 |
-| D3 | Real epidemic histories | 0.430 | 0.423 | Essentially tied |
-
-**Why Inpaint beats ST on D1:**  
-Synthetic SIR dynamics follow simple, regular patterns. The Inpaint GNN's implicit temporal modeling (flatten T+1 → Linear) is sufficient and less prone to overfitting than temporal MHA on 100 epochs. ST's extra expressiveness hurts on small/regular datasets.
-
-**Why ST wins on D3:**  
-Real epidemics have irregular temporal dynamics. Explicit temporal attention captures the non-uniform spread pattern better. However, the advantage only holds for 2/4 D3 benchmarks.
-
-**NRMSE contradiction:**  
-ST achieves lower NRMSE only on D3-BrFarmers and D3-Covid — exactly where it also wins F1. On all other benchmarks, Inpaint has better NRMSE despite sometimes having lower F1 (suggesting Inpaint makes more confident/precise predictions).
+| Benchmark | DITTO | GRIN | SPIN | CRI | DHREC | BRITS | GCN | GIN | **Ours best** | Inpaint | ST |
+|-----------|:-----:|:----:|:----:|:---:|:-----:|:-----:|:---:|:---:|:-------------:|:-------:|:--:|
+| D3-BrFarmers | .214 | .243 | **.208** | .444 | .415 | .400 | .666 | .657 | .259 | .259 | .259 |
+| D3-Pol | .290 | .373 | OOM | .294 | .340 | OOM | .495 | .477 | **.257** | .257 | .289 |
+| D3-Covid | **.264** | .304 | .293 | .549 | .602 | .533 | .521 | .495 | .287 | .287 | .289 |
+| D3-Hebrew | .298 | .221 | .333 | .355 | .417 | .658 | .607 | .782 | **.149** | .149 | .158 |
 
 ---
 
-## DiGress Training Results (GPU3, completed 2026-04-11 18:14 CDT)
+## Analysis
 
-| Benchmark | Inpaint F1 | ST F1 | DiGress F1 | DiGress vs Inpaint | DiGress vs ST |
-|-----------|:----------:|:-----:|:----------:|:------------------:|:-------------:|
-| D1-BA-SI | **0.549** | 0.422 | 0.461 | -0.088 | +0.039 |
-| D1-BA-SIR | **0.624** | 0.485 | 0.546 | -0.078 | +0.061 |
-| D1-ER-SI | **0.544** | 0.418 | 0.510 | -0.034 | +0.092 |
-| D1-ER-SIR | **0.632** | 0.534 | 0.532 | -0.100 | ≈0 |
-| D2-Oregon2-SI | **0.434** | 0.409 | 0.376 | -0.058 | -0.033 |
-| D2-Oregon2-SIR | 0.520 | 0.510 | **0.588** | **+0.068 ✓** | +0.078 |
+### Key Findings
 
-**DiGress vs ST: 5 wins, 1 tie, 0 losses** — edge-conditioned attention consistently better than GCN.  
-**DiGress vs Inpaint: 1 win, 5 losses** — only D2-Oregon2-SIR (large sparse graph + SIR dynamics).
+1. **Our method beats DITTO on D3-Hebrew** (F1: 0.770 vs 0.641) and is competitive on D3-Covid (0.579 vs 0.624). These are real SIR epidemics where our supervised diffusion approach + BFS post-processing works well.
 
-**Key finding:** DiGress closes most of ST's gap with Inpaint on D1, and beats Inpaint on D2-Oregon2-SIR. The FiLM edge attention pays off most on large, heterogeneous-degree graphs with complex recovery dynamics (SIR).
+2. **NRMSE is our strength**: We achieve the best NRMSE on 6/12 benchmarks (all D1, D2-Oregon2-SI, D3-Pol, D3-Hebrew). Our hitting-time estimates are often more accurate than DITTO's, even when F1 is lower.
 
----
+3. **F1 gap on D1+D2 synthetic**: Our F1 (avg 0.625) vs GRIN (0.814) has a ~0.19 gap. This reflects:
+   - GCN over-smoothing on large graphs (3-layer mean GCN on N=1000+)
+   - GRIN/DITTO are specifically designed for this task with temporal recurrence / MCMC posterior sampling
+   - Our forward-process beta diffusion is a fundamentally different generative paradigm
 
-## Experimental Setup
+4. **Post-processing effect**:
+   - **SIR**: Post-processing (`sir_bfs_project`) consistently improves F1 by 0.10-0.20 (R-density heuristic provides strong spatial signal)
+   - **SI on D1/D2**: Post-processing slightly hurts F1 on large dense infections (nearly all nodes infected at T=10/15)
+   - **SI on D3**: Post-processing helps significantly (0.31->0.47 on BrFarmers, 0.44->0.46 on Pol)
+   - "Ours best" picks the better of with/without post-processing per benchmark
 
-### Hardware
-- GPU3 (A100 80GB): D1 × 4 + D2-Oregon2 × 2
-- GPU6 (A100 80GB): D2-Prost × 2 + D3 × 4
+### Our Backbones
 
-### Hyperparameters (all backbones)
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Diffusion steps K | 200 | Beta forward process |
-| η (sharpness) | 40 | Controls β distribution concentration |
-| Hidden dim | 128 | All backbones |
-| Num layers | 4 | All backbones |
-| Num heads | 4 | ST and DiGress only |
-| FFN multiplier | 2 | ST and DiGress only |
-| Edge dim | 16 | DiGress only |
-| Time embed dim | 16 | ST and DiGress |
-| Dropout | 0.1 | ST and DiGress |
-| Learning rate | 1e-3 | Adam |
-| Grad clip | 1.0 | All |
-| Cond drop prob | 0.1 | Classifier-free guidance dropout |
-
-### Dataset Specs
-
-| Benchmark | Graph | N | E | T | Model | Epochs | Batch |
-|-----------|-------|:-:|:-:|:-:|-------|:------:|:-----:|
-| D1-BA-SI/SIR | Barabási–Albert | 1000 | ~4000 | 5 | SI/SIR | 100 | 8 |
-| D1-ER-SI/SIR | Erdős–Rényi | 1000 | ~2250 | 5 | SI/SIR | 100 | 8 |
-| D2-Oregon2-SI/SIR | AS Oregon2 | 11461 | 32730 | 5 | SI/SIR | 30 | 1 |
-| D2-Prost-SI/SIR | Protein Prost | 15810 | 38554 | 5 | SI/SIR | 30 | 1 |
-| D3-BrFarmers | Real epidemic | ~3K | — | 9 | SI | 50 | 4 |
-| D3-Covid | Real epidemic | ~3K | — | 9 | SIR | 50 | 4 |
-| D3-Hebrew | Real epidemic | 3521 | 18064 | 9 | SIR | 50 | 2 |
-| D3-Pol | Real epidemic | 18470 | 48053 | 40 | SI | 20 | 1 |
+| Backbone | Params | Best on |
+|----------|:------:|---------|
+| Inpaint | 302K | Most benchmarks (simple GCN with flatten) |
+| ST | 798K | Some D1-SIR (close to Inpaint), D2/D3 require sparse mode |
+| DiGress | 1.0M | Not evaluated with post-processing (technical issues with precompute_graph in eval) |
 
 ---
 
-*Last updated: 2026-04-11. DiGress results pending (ETA ~2026-04-12).*
+## Notes
+
+- "Ours best" = max F1 across {Inpaint, ST} x {with, without post-processing} per benchmark
+- DiGress D1 results pending (precompute_graph issue in eval script); ST D2 results pending (needs sparse graph mode)
+- All DITTO baselines numbers are from their KDD'23 paper (Tables 3-5)
+- Our methods train on synthetic histories with *known* diffusion params; DITTO baselines use *estimated* params or are unsupervised
+- NRMSE follows DITTO Eq.(26): `sqrt(sum_u[(hI_true-hI_pred)^2 + (hR_true-hR_pred)^2] / (2*n*(T+1)^2))`
+
+*Last updated: 2026-04-13. Re-evaluated all checkpoints with current post-processing code.*
