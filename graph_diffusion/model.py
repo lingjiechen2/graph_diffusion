@@ -100,27 +100,40 @@ class HistoryInpaintGNN(nn.Module):
         self.timesteps = timesteps
         self.T_plus_1 = timesteps + 1
         self.state_dim = state_dim
+        self.hidden_dim = hidden_dim
 
         # Input channels per (node,time): Z_k plus extra conditional channels.
         # If cond_components=2, input channels = (1+2)*d_s = 3*d_s for [Z, Y_obs, mask].
         self.in_state_dim = (1 + cond_components) * state_dim
         self.time_embed = nn.Embedding(max_steps, time_embed_dim)
 
+        # Per-timestep encoder (not flattened): preserves temporal structure.
         per_time_dim = self.in_state_dim + time_embed_dim
-        flat_in_dim = self.T_plus_1 * per_time_dim
-        flat_out_dim = self.T_plus_1 * state_dim
-
-        self.encoder = nn.Linear(flat_in_dim, hidden_dim)
+        self.encoder = nn.Linear(per_time_dim, hidden_dim)
         self.step_embed = nn.Embedding(max_steps, hidden_dim)
         self.layers = nn.ModuleList(
             nn.ModuleList([nn.Linear(hidden_dim, hidden_dim), nn.Linear(hidden_dim, hidden_dim)])
             for _ in range(num_layers)
         )
+        # LayerNorm per GCN layer to prevent over-smoothing.
+        self.layer_norms = nn.ModuleList(
+            nn.LayerNorm(hidden_dim) for _ in range(num_layers)
+        )
+        # Gated aggregation: learn when to ignore neighbours.
+        self.gates = nn.ModuleList(
+            nn.Linear(hidden_dim, hidden_dim) for _ in range(num_layers)
+        )
         self.dropout = nn.Dropout(dropout)
+        # Temporal mixer: per-node mixing ACROSS timesteps.
+        # A Linear(T+1, T+1) applied to the time dimension lets the model
+        # learn temporal patterns like monotone S→I ordering.
+        self.temporal_mix = nn.Linear(self.T_plus_1, self.T_plus_1)
+        self.temporal_norm = nn.LayerNorm(hidden_dim)
+        # Per-timestep decoder (not flattened).
         self.decoder = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, flat_out_dim),
+            nn.Linear(hidden_dim, state_dim),
         )
 
     def _normalize_adj(self, A: torch.Tensor) -> torch.Tensor:
@@ -143,25 +156,47 @@ class HistoryInpaintGNN(nn.Module):
         t_emb = t_emb.view(1, 1, T_plus_1, -1).expand(B, N, T_plus_1, -1)
 
         X = torch.cat([X_k, t_emb], dim=-1)  # (B,N,T+1,Cin+E)
-        flat = X.reshape(B, N, -1)
 
-        h = self.encoder(flat)
+        # Per-timestep encoder: (B,N,T+1,per_time_dim) -> (B,N,T+1,H)
+        h = self.encoder(X)
         h_skip = h  # skip connection: preserve per-node features before GCN smoothing
+
         A_norm = self._normalize_adj(A)
         if A_norm.size(0) == 1 and B > 1:
             A_norm = A_norm.expand(B, -1, -1)
 
-        step_emb = self.step_embed(k_index)[:, None, :]
-        for self_w, neigh_w in self.layers:
-            m = torch.bmm(A_norm, h)
-            h = self_w(h) + neigh_w(m) + step_emb
-            h = torch.relu(h)
-            h = self.dropout(h)
+        # Diffusion step embedding: (B,1,1,H) broadcast over N and T+1.
+        step_emb = self.step_embed(k_index)[:, None, None, :]
 
-        # Residual from pre-GCN representation preserves node-specific
-        # final-state information that 3-layer mean aggregation would erase.
+        # Per-timestep GCN with gating and LayerNorm.
+        # Aggregate over spatial neighbours independently for each timestep.
+        for (self_w, neigh_w), ln, gate_w in zip(self.layers, self.layer_norms, self.gates):
+            # h: (B, N, T+1, H) -> permute to (B, T+1, N, H) for spatial matmul
+            h_perm = h.permute(0, 2, 1, 3)                         # (B, T+1, N, H)
+            # A_norm: (B, N, N) -> expand to (B, T+1, N, N)
+            A_exp = A_norm.unsqueeze(1).expand(B, T_plus_1, N, N)
+            m_perm = torch.matmul(A_exp, h_perm)                   # (B, T+1, N, H)
+            m = m_perm.permute(0, 2, 1, 3)                         # (B, N, T+1, H)
+
+            # Gated aggregation: learn when to ignore neighbourhood.
+            gate = torch.sigmoid(gate_w(h))                         # (B, N, T+1, H)
+            m = gate * m
+
+            gcn_out = torch.relu(self_w(h) + neigh_w(m) + step_emb)
+            gcn_out = self.dropout(gcn_out)
+            h = ln(h + gcn_out)                                     # residual + LayerNorm
+
+        # Global skip connection from pre-GCN encoder output.
         h = h + h_skip
 
-        logits = self.decoder(h).view(B, N, T_plus_1, self.state_dim)
+        # Temporal mixing: let each node reason across its own T+1 timesteps.
+        # Transpose so Linear operates across time: (B,N,H,T+1) -> mix -> (B,N,H,T+1)
+        h_t = h.permute(0, 1, 3, 2)     # (B, N, H, T+1)
+        h_t = self.temporal_mix(h_t)     # mix across T+1 dimension
+        h_t = h_t.permute(0, 1, 3, 2)   # (B, N, T+1, H)
+        h = self.temporal_norm(h + h_t)
+
+        # Per-timestep decoder: (B,N,T+1,H) -> (B,N,T+1,state_dim)
+        logits = self.decoder(h)
         probs = torch.softmax(logits, dim=-1)
         return probs
