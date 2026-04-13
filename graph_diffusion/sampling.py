@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 
 from .beta_diffusion import HistoryBetaDiffusion, EPS
+from .sir_postprocess import sir_bfs_project
 
 
 @torch.no_grad()
@@ -14,6 +15,7 @@ def sample_history(
     mask: torch.Tensor,
     num_steps: Optional[int] = None,
     clamp_obs_each_step: bool = True,
+    sir_project: bool = True,
 ) -> torch.Tensor:
     """
     Conditional reverse diffusion with inpainting-style clamping.
@@ -55,4 +57,7 @@ def sample_history(
         if clamp_obs_each_step:
             Z_prev = mask * Y_obs + (1 - mask) * Z_prev
         Z_k = Z_prev.clamp(min=EPS, max=1 - EPS)
+
+    if sir_project:
+        Z_k = sir_bfs_project(Z_k, Y_obs, A)
     return Z_k
