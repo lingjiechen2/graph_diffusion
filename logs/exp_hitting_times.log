@@ -1,0 +1,151 @@
+================================================================================
+HITTING-TIME DIFFUSION MODE EXPERIMENT
+================================================================================
+
+============================================================
+  D1-BA-SI
+============================================================
+  SpaceTimeGNN params: 247,298
+  epoch   1 | loss 6.2265 | mono 0.000000
+  epoch  20 | loss 2.2577 | mono 0.000000
+  epoch  40 | loss 1.6342 | mono 0.000000
+  epoch  60 | loss 1.4101 | mono 0.000000
+  epoch  80 | loss 1.0482 | mono 0.000000
+  epoch 100 | loss 1.1265 | mono 0.000000
+  epoch 120 | loss 1.3000 | mono 0.000000
+  epoch 140 | loss 1.2028 | mono 0.000000
+  epoch 160 | loss 1.3439 | mono 0.000000
+  epoch 180 | loss 1.5577 | mono 0.000000
+  epoch 200 | loss 0.8860 | mono 0.000000
+  Training done in 469s
+
+    t |  true I |  pred I
+  -------------------------
+    0 |      50 |     959
+    1 |      87 |     960
+    2 |     182 |     960
+    3 |     301 |     960
+    4 |     468 |     960
+    5 |     620 |     960
+    6 |     739 |     960
+    7 |     824 |     960
+    8 |     896 |     960
+    9 |     930 |     960
+   10 |     960 |     960
+
+  RESULT: F1=0.3037  NRMSE=0.3376  t0_pred=949.1
+  Saved to /home/lingjie7/graph_diffusion/runs/D1-BA-SI-hitting-times.pt
+
+============================================================
+  D1-ER-SI
+============================================================
+  SpaceTimeGNN params: 247,298
+  epoch   1 | loss 6.2828 | mono 0.000000
+  epoch  20 | loss 1.5523 | mono 0.000000
+  epoch  40 | loss 1.3042 | mono 0.000000
+  epoch  60 | loss 1.4665 | mono 0.000000
+  epoch  80 | loss 1.2110 | mono 0.000000
+  epoch 100 | loss 1.0871 | mono 0.000000
+  epoch 120 | loss 1.3309 | mono 0.000000
+  epoch 140 | loss 1.1298 | mono 0.000000
+  epoch 160 | loss 1.3144 | mono 0.000000
+  epoch 180 | loss 1.5361 | mono 0.000000
+  epoch 200 | loss 0.8951 | mono 0.000000
+  Training done in 206s
+
+    t |  true I |  pred I
+  -------------------------
+    0 |      50 |     952
+    1 |      94 |     955
+    2 |     162 |     955
+    3 |     258 |     955
+    4 |     378 |     955
+    5 |     524 |     955
+    6 |     658 |     955
+    7 |     779 |     955
+    8 |     872 |     955
+    9 |     919 |     955
+   10 |     955 |     955
+
+  RESULT: F1=0.2973  NRMSE=0.3639  t0_pred=938.6
+  Saved to /home/lingjie7/graph_diffusion/runs/D1-ER-SI-hitting-times.pt
+
+============================================================
+  D1-BA-SIR
+============================================================
+  SpaceTimeGNN params: 247,298
+  epoch   1 | loss 6.2284 | mono 0.000000
+  epoch  20 | loss 1.7289 | mono 0.000000
+  epoch  40 | loss 1.1248 | mono 0.000000
+  epoch  60 | loss 1.3516 | mono 0.000000
+  epoch  80 | loss 1.0677 | mono 0.000000
+  epoch 100 | loss 0.9807 | mono 0.000000
+  epoch 120 | loss 1.1856 | mono 0.000000
+  epoch 140 | loss 1.3598 | mono 0.000000
+  epoch 160 | loss 1.1597 | mono 0.000003
+  epoch 180 | loss 1.2590 | mono 0.000000
+  epoch 200 | loss 0.7860 | mono 0.000001
+  Training done in 165s
+
+    t |  true I |  pred I
+  -------------------------
+    0 |      50 |     569
+    1 |      74 |     524
+    2 |     150 |     523
+    3 |     238 |     522
+    4 |     345 |     522
+    5 |     443 |     522
+    6 |     510 |     522
+    7 |     535 |     522
+    8 |     554 |     522
+    9 |     543 |     522
+   10 |     522 |     522
+
+  RESULT: F1=0.4935  NRMSE=0.4827  t0_pred=586.0
+  Saved to /home/lingjie7/graph_diffusion/runs/D1-BA-SIR-hitting-times.pt
+
+============================================================
+  D1-ER-SIR
+============================================================
+  SpaceTimeGNN params: 247,298
+  epoch   1 | loss 6.3053 | mono 0.000000
+  epoch  20 | loss 1.4166 | mono 0.000000
+  epoch  40 | loss 1.1629 | mono 0.000000
+  epoch  60 | loss 1.4617 | mono 0.000000
+  epoch  80 | loss 1.0632 | mono 0.000000
+  epoch 100 | loss 0.9777 | mono 0.000000
+  epoch 120 | loss 1.2085 | mono 0.000000
+  epoch 140 | loss 1.0468 | mono 0.000000
+  epoch 160 | loss 1.1686 | mono 0.000002
+  epoch 180 | loss 1.3861 | mono 0.000000
+  epoch 200 | loss 0.8612 | mono 0.000019
+  Training done in 166s
+
+    t |  true I |  pred I
+  -------------------------
+    0 |      50 |     584
+    1 |      81 |     530
+    2 |     129 |     527
+    3 |     196 |     526
+    4 |     279 |     526
+    5 |     377 |     526
+    6 |     450 |     526
+    7 |     495 |     526
+    8 |     536 |     526
+    9 |     531 |     526
+   10 |     526 |     526
+
+  RESULT: F1=0.4759  NRMSE=0.4835  t0_pred=629.0
+  Saved to /home/lingjie7/graph_diffusion/runs/D1-ER-SIR-hitting-times.pt
+
+================================================================================
+SUMMARY
+================================================================================
+Benchmark                    F1    NRMSE  t0_pred
+--------------------------------------------------
+D1-BA-SI                 0.3037   0.3376    949.1
+D1-ER-SI                 0.2973   0.3639    938.6
+D1-BA-SIR                0.4935   0.4827    586.0
+D1-ER-SIR                0.4759   0.4835    629.0
+
+Done!
